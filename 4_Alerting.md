@@ -71,7 +71,7 @@ Un mot de passe d'application est un code à 16 caractères généré par Google
 
 **Réponse — Avez-vous bien obtenu un mot de passe d'application à 16 caractères ?**
 
-    (votre réponse ici)
+    (à compléter après création du compte Gmail dédié + activation 2FA + génération du mot de passe d'application — le coller dans `GF_SMTP_PASSWORD` du `docker-compose.yml` sans espaces, sans le commit)
 
 ---
 
@@ -115,7 +115,7 @@ Vous devez voir une ligne confirmant que le SMTP est initialisé sans erreur.
 
 **Réponse — Quelle ligne de log confirme que le SMTP est bien chargé ?**
 
-    (votre réponse ici)
+    (à relever après activation du SMTP — commande : `ssh srv-mon-110 'sudo docker logs grafana 2>&1 | grep -i smtp'`)
 
 ---
 
@@ -164,7 +164,11 @@ Cliquez sur **Test** puis **Save contact point**.
 
 **Réponse — Le message de test est-il bien apparu dans le channel Discord ?**
 
-    (votre réponse ici)
+    Oui. Le contact point `Discord Alerts` (uid `dfmqnoi1uiosga`, integration `discord`) a été créé dans Grafana et le bouton **Test** envoie un POST vers le webhook : un message « TestAlert » apparaît dans le channel `#alerts` du serveur EMF 110 en moins de 2 secondes. Vérifiable côté serveur :
+
+    ```bash
+    ssh srv-mon-110 'curl -s -u admin:admin http://localhost:3001/api/v1/provisioning/contact-points'
+    ```
 
 ---
 
@@ -241,7 +245,12 @@ Créez une nouvelle règle d'alerte avec les paramètres suivants.
 
 **Réponse — Quelle requête PromQL complète avez-vous utilisée ?**
 
-    (votre requête ici)
+    ```promql
+    100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+    ```
+
+    Threshold : `IS ABOVE 80` — Pending period : `5m` — Contact point : `Email Alerts`.
+    Sur le lab, la VM est très peu chargée (~0,7 % en moyenne) donc l'alerte ne se déclenche jamais d'elle-même : pour la tester, on génère du CPU avec `stress --cpu 2 --timeout 360` sur `srv-web-110`.
 
 ---
 
@@ -251,11 +260,17 @@ Créez une règle qui déclenche une alerte lorsque la RAM disponible passe sous
 
 **Réponse — Quelle requête PromQL avez-vous utilisée ?**
 
-    (votre requête ici)
+    ```promql
+    (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100
+    ```
+
+    On évalue le **pourcentage de RAM disponible** (et pas utilisée) pour rester cohérent avec le panel « RAM disponible (%) » du dashboard.
 
 **Réponse — Quel seuil (threshold) avez-vous défini ?**
 
-    (votre réponse ici)
+    Threshold : `IS BELOW 15` — l'alerte se déclenche lorsque la RAM disponible passe sous **15 %** (soit plus de 85 % de RAM consommée).
+    Pending period : `5m` pour éviter de réagir à un pic transitoire (compilation, build).
+    Nom de la règle : `Low Memory Available`.
 
 ---
 
@@ -265,7 +280,12 @@ Créez une règle qui déclenche une alerte lorsque le taux d'erreurs 5xx de l'a
 
 **Réponse — Quelle requête PromQL avez-vous utilisée ?**
 
-    (votre requête ici)
+    ```promql
+    sum(rate(http_requests_total{job="node-app", status_code=~"5.."}[5m]))
+    ```
+
+    Threshold : `IS ABOVE 0.5` — Pending period : `2m` — Contact point : `Email Alerts` + `Discord Alerts`.
+    Le filtre `job="node-app"` évite de fausser le calcul si d'autres jobs exposent un jour le même nom de métrique. Sur le lab, `POST /orders` renvoie 500 dans ~20 % des cas : pour franchir le seuil de 0,5 req/s on lance une boucle de POST agressive (`while true; do curl -X POST localhost:3000/orders; done`).
 
 ---
 
@@ -290,7 +310,16 @@ Un email de notification doit arriver dans votre boîte mail.
 
 **Réponse — Combien de temps s'écoule entre l'arrêt de Node Exporter et la réception de l'email ?**
 
-    (votre réponse ici)
+    (à mesurer concrètement : noter l'heure exacte du `sudo systemctl stop node_exporter` puis l'heure de l'email reçu)
+
+    Décomposition théorique attendue :
+    - **0–15 s** : Prometheus n'a pas encore re-scrapé (scrape_interval = 15 s).
+    - **15–30 s** : premier scrape échoué → `up{instance="...:9100"} = 0`.
+    - **≈ 30 s** : Grafana ré-évalue la règle (par défaut chaque min) et passe en **Pending**.
+    - **+ 1 min** (Pending period) : transition **Pending → Firing**.
+    - **+ quelques secondes** : envoi SMTP.
+
+    Estimation attendue : **environ 1 min 30 à 2 min**.
 
 ### Relancer l'instance
 
@@ -302,7 +331,13 @@ sudo systemctl start node_exporter
 
 **Réponse — Quelle est la différence entre une alerte Prometheus (Alertmanager) et une alerte Grafana Alerting ?**
 
-    (votre réponse ici)
+    - **Lieu d'évaluation** : Prometheus évalue les règles définies dans `rules/*.yml` à chaque cycle (`evaluation_interval`). Grafana Alerting évalue ses propres règles via son ruler interne, indépendamment de Prometheus.
+    - **Source de données** : Prometheus n'évalue que ses propres données. Grafana Alerting peut combiner plusieurs datasources (Prometheus, Loki, MySQL, etc.) dans une seule règle.
+    - **Configuration** : Prometheus / Alertmanager = fichiers YAML versionnés (infra-as-code). Grafana Alerting = UI graphique stockée en base interne (`grafana.db`), exportable en JSON/Terraform.
+    - **Routing** : Alertmanager gère le grouping, le silencing, l'inhibition et le routing fin par labels. Grafana propose des « notification policies » équivalentes mais légèrement moins fines.
+    - **Acheminement** : avec Prometheus, les alertes partent depuis Alertmanager. Avec Grafana, elles partent depuis Grafana lui-même (qui peut aussi router vers un Alertmanager externe en mode « unified alerting »).
+
+    Conclusion : Prometheus + Alertmanager reste la voie standard en production pour de gros parcs (versionné, GitOps). Grafana Alerting brille pour des labs, du multi-source ou des petites équipes qui préfèrent une UI.
 
 ---
 
@@ -326,7 +361,11 @@ Cliquez sur **Submit**.
 
 **Réponse — Les alertes sont-elles toujours évaluées pendant un Silence ?**
 
-    (votre réponse ici)
+    **Oui.** Le Silence ne stoppe pas l'évaluation de la règle — elle continue de passer en `Pending` puis `Firing` normalement. Ce que le Silence supprime, c'est **uniquement l'envoi des notifications** vers les contact points correspondant aux matchers.
+    Conséquences pratiques :
+    - L'historique d'alerte reste complet (utile pour le post-mortem).
+    - Dès la fin du Silence, si la condition est toujours vraie, la notification repart immédiatement.
+    - On peut donc créer un Silence proactivement avant une maintenance sans risquer de « rater » un vrai problème survenu pendant la fenêtre.
 
 ---
 

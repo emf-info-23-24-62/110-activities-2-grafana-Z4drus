@@ -72,7 +72,12 @@ Sauvegardez le panel.
 
 **Réponse — Listez les instances disponibles dans votre menu :**
 
-    (votre réponse ici)
+    La requête `label_values(up, instance)` retourne les 4 cibles scrapées :
+    - `prometheus:9090`
+    - `alertmanager:9093`
+    - `85.217.163.213:9100`  (node_exporter sur srv-web-110)
+    - `85.217.163.213:3000`  (app NodeJS sur srv-web-110)
+    Seules les deux dernières remontent des métriques `node_*` ou `http_*` exploitables dans les panels.
 
 
 ### 4. Ajouter une variable `job`
@@ -88,7 +93,11 @@ Créez une deuxième variable pour filtrer par job Prometheus.
 
 **Réponse — Quels jobs apparaissent dans le menu ?**
 
-    (votre réponse ici)
+    Les 4 jobs définis dans `prometheus.yml` :
+    - `prometheus`     (auto-scrape de Prometheus)
+    - `alertmanager`   (auto-scrape d'Alertmanager)
+    - `node-exporter`  (srv-web-110:9100)
+    - `node-app`       (srv-web-110:3000, app NodeJS)
 
 
 ### 5. Variable d'intervalle pour le rate()
@@ -111,7 +120,9 @@ sum by(route) (rate(http_requests_total[$interval]))
 
 **Réponse — Que se passe-t-il si vous choisissez un intervalle de 1m vs 30m ?**
 
-    (votre réponse ici)
+    - **1m** : la courbe est très réactive — chaque burst de trafic apparaît immédiatement (pics nets, vallées profondes). Inconvénient : très bruité, sensible à chaque scrape manquant.
+    - **30m** : `rate()` moyenne sur 30 minutes, la courbe est lissée et beaucoup plus stable. Les pics ponctuels disparaissent dans la moyenne, on voit les tendances mais pas les anomalies courtes.
+    Règle pratique : `rate([X])` exige au moins 2 scrapes dans `X` (scrape_interval = 15 s ici), donc l'intervalle doit toujours être > 30 s. On choisit selon le besoin : court pour le debug temps réel, long pour les tendances.
 
 
 ## Annotations
@@ -134,7 +145,13 @@ Les **annotations** permettent d'afficher des événements ponctuels sur vos gra
 
 **Réponse — A quoi cela peut-il servir en production ?**
 
-    (votre réponse ici)
+    Les annotations matérialisent un **événement** sur tous les graphiques temporels : on voit immédiatement la corrélation entre une action et une métrique.
+    Cas d'usage typiques :
+    - **Déploiement** : une annotation auto-générée par la CI à chaque release permet de voir si la latence ou les erreurs ont bougé après une mise en prod.
+    - **Incident** : marquer le début et la fin d'un incident pour le post-mortem.
+    - **Maintenance** : redémarrage planifié, migration DB, bascule réseau.
+    - **Changement de config** : feature flag activé, mise à l'échelle d'un cluster.
+    On peut aussi alimenter les annotations automatiquement via l'API Grafana ou un datasource (par ex. requête PromQL `changes(deploy_info[1h])`).
 
 
 ## Résultat

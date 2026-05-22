@@ -95,7 +95,12 @@ up
 
 **Réponse — Quel résultat observez-vous ?**
 
-    (votre réponse ici)
+    Les 4 cibles scrapées par Prometheus retournent `1` (UP) :
+    - `prometheus:9090` (job prometheus)
+    - `alertmanager:9093` (job alertmanager)
+    - `85.217.163.213:9100` (job node-exporter)
+    - `85.217.163.213:3000` (job node-app)
+    Tous les panels affichent donc une valeur verte « 1 ». Si un service tombe, la stat passe à 0 et le seuil rouge se déclenche.
 
 
 ### Panel 2 — Utilisation CPU
@@ -113,7 +118,8 @@ up
 
 **Réponse — Quel est le pourcentage de CPU moyen observé ?**
 
-    (votre réponse ici)
+    Environ **0,7 %** sur `srv-web-110` (la seule instance exposant node_exporter).
+    La VM est très peu chargée — les pics correspondent aux bursts de trafic curl sur l'app NodeJS et au scrape Prometheus (toutes les 15 s).
 
 
 ### Panel 3 — Mémoire disponible
@@ -133,7 +139,8 @@ up
 
 **Réponse — Quel est le pourcentage de RAM disponible ?**
 
-    (votre réponse ici)
+    Environ **76,4 %** de RAM disponible sur `srv-web-110`.
+    La jauge est largement dans la zone verte (seuils orange < 30 %, rouge < 10 %).
 
 
 ### Panel 4 — Espace disque utilisé
@@ -151,7 +158,8 @@ up
 
 **Réponse — Quel est le pourcentage d'espace disque utilisé ?**
 
-    (votre réponse ici)
+    Environ **32,2 %** d'espace disque utilisé sur la partition `/` de `srv-web-110`.
+    Largement sous les seuils d'alerte — la VM dispose donc encore d'environ 68 % d'espace libre.
 
 
 ### Panel 5 — Requêtes HTTP par seconde (app NodeJS)
@@ -169,7 +177,9 @@ sum by(route) (rate(http_requests_total[1m]))
 
 **Réponse — Quelles routes génèrent le plus de trafic ?**
 
-    (votre réponse ici)
+    Lorsque le script de génération de trafic tourne, les routes `/`, `/health`, `/users`, `/notfound` et `/orders` reçoivent le même volume (~0,4 req/s chacune avec 100 itérations) car le générateur les appelle de manière équivalente.
+    La route `/metrics` apparaît également (~0,067 req/s) : c'est Prometheus qui la scrape toutes les 15 s.
+    En l'absence de trafic, seule `/metrics` reste active.
 
 
 ### Panel 6 — Taux d'erreurs HTTP
@@ -188,7 +198,9 @@ sum(rate(http_requests_total{status_code=~"5.."}[1m]))
 
 **Réponse — Y a-t-il des erreurs ? Sur quelle route ?**
 
-    (votre réponse ici)
+    Oui. La route `POST /orders` retourne aléatoirement un code `500` avec une probabilité de ~20 % (voir `index.js` de l'app NodeJS) : on observe environ **0,08 req/s en 5xx** sur cette route.
+    La route `/error` renvoie systématiquement 500 mais elle n'est pas appelée par le générateur par défaut.
+    La route `/notfound` génère des erreurs `404` (~0,4 req/s) qui n'apparaissent pas dans ce panel car le filtre est `5..`.
 
 ### Panel 7 — Latence P95 des requêtes
 
@@ -205,7 +217,8 @@ histogram_quantile(0.95, sum by(le, route) (rate(http_request_duration_seconds_b
 
 **Réponse — Quelle route a la latence la plus élevée ? Pourquoi ?**
 
-    (votre réponse ici)
+    En conditions normales, toutes les routes rapides (`/`, `/health`, `/users`, `/orders`, `/notfound`, `/metrics`) ont une P95 quasi-identique d'environ **4,75 ms** — le premier bucket de l'histogramme (5 ms) capture l'essentiel des requêtes.
+    Dès qu'on appelle `/slow`, c'est elle qui prend la tête : le handler ajoute un `setTimeout` aléatoire entre 300 ms et 1 800 ms, donc sa P95 monte typiquement à **~1,5 s**. C'est attendu : la latence reflète directement le délai artificiel injecté côté serveur.
 
 
 ### Panel 8 — Utilisateurs actifs
@@ -223,7 +236,9 @@ app_active_users
 
 **Réponse — Comment évolue cette valeur dans le temps ?**
 
-    (votre réponse ici)
+    `app_active_users` est une **Gauge** : sa valeur est réécrite à chaque appel de `GET /users` avec un entier aléatoire entre 1 et 100.
+    Conséquence : la courbe est en dents de scie, sans tendance, et reste constante entre deux appels. La dernière valeur observée est de **61 utilisateurs actifs**.
+    En production, ce serait un compteur réellement représentatif (sessions actives, websockets ouverts, etc.).
 
 ## Sauvegarder le dashboard
 
